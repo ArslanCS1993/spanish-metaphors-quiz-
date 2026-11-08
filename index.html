@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Spanish Idioms Quiz — Guess the Meaning</title>
+<title>Spanish Idioms Quiz — Spaced Repetition</title>
 <style>
 :root{--bg:#0b0f14;--card:#121821;--muted:#8a94a6;--accent:#6ee7ff;--good:#4ade80;--bad:#f87171;--text:#e6edf3}
 *{box-sizing:border-box}
@@ -11,7 +11,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-ap
 header{padding:24px 20px;border-bottom:1px solid #1f2937;background:linear-gradient(180deg,#0f1520,transparent)}
 h1{margin:0;font-size:clamp(22px,4vw,32px)}
 .sub{color:var(--muted);margin-top:6px}
-main{max-width:880px;margin:0 auto;padding:24px 20px}
+main{max-width:920px;margin:0 auto;padding:24px 20px}
 .card{background:var(--card);border:1px solid #1f2937;border-radius:16px;padding:20px;margin:20px 0}
 .expr{font-size:clamp(20px,4vw,28px);font-weight:600;margin:0 0 8px}
 .meta{color:var(--muted);font-size:14px}
@@ -24,16 +24,21 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .score{font-weight:600}
 footer{color:var(--muted);font-size:13px;margin-top:32px}
 a{color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:12px}
+.badge{font-size:12px;padding:4px 8px;border-radius:999px;background:#1f2937;color:var(--muted)}
+.progress{height:8px;background:#0b1118;border-radius:999px;overflow:hidden;margin-top:8px}
+.progress>div{height:100%;background:var(--accent);width:0%}
 </style>
 </head>
 <body>
 <header>
-<h1>Spanish Idioms — Meaning Quiz</h1>
-<div class="sub">Guess the meaning in English. 10 idioms, free text. AI feedback via ChatGPT prefill, no backend.</div>
+<h1>Spanish Idioms — Spaced Repetition Quiz</h1>
+<div class="sub">Guess meaning → self-rate → spaced review. Progress saved locally.</div>
 </header>
 <main>
 <div class="card">
-<div class="meta">Item <span id="idx">1</span> / <span id="total">10</span> &nbsp;•&nbsp; Score: <span id="score" class="score">0</span></div>
+<div class="meta">Item <span id="idx">1</span> / <span id="total">10</span> &nbsp;•&nbsp; Due: <span id="due">0</span> &nbsp;•&nbsp; Known: <span id="known">0</span>/10</div>
+<div class="progress"><div id="prog"></div></div>
 <p class="expr" id="expr">—</p>
 <p class="meta" id="head">—</p>
 <textarea id="guess" placeholder="Type your guess for the meaning in English…"></textarea>
@@ -43,13 +48,27 @@ a{color:var(--accent)}
 <button id="ai" class="secondary">Get AI feedback</button>
 </div>
 <div id="feedback" class="answers" hidden></div>
+<div id="rate" class="row" hidden>
+<span class="meta">How well did you know it?</span>
+<button id="rateBad" class="secondary">Hard / Forgot</button>
+<button id="rateOk" class="secondary">Okay</button>
+<button id="rateGood" class="secondary">Easy</button>
 </div>
+</div>
+
+<div class="card">
+<h2>Knowledge Overview</h2>
+<div id="overview" class="grid"></div>
+<button id="reset" class="secondary">Reset progress</button>
+</div>
+
 <div class="card" id="result" hidden>
-<h2>Done</h2>
+<h2>Session Done</h2>
 <p id="resultText"></p>
-<button id="restart">Restart quiz</button>
+<button id="restart">Restart session</button>
 </div>
-<footer>Data source: The Big Red Book of Spanish Idioms. 10 sample items from /root/figurativeLanguage/spanish/spanish_idioms_full.md</footer>
+
+<footer>Local spaced repetition with SM-2. Data stored in localStorage. Source: The Big Red Book of Spanish Idioms.</footer>
 </main>
 <script>
 const DATA = [
@@ -64,7 +83,25 @@ const DATA = [
 {head:"abrasarse", expr:"abrasarse de amores", eng:["to be burning with love","to be madly in love"]},
 {head:"abrasarse", expr:"abrasarse en deseo", eng:["to be ablaze/aflame with desire"]}
 ];
-let i=0, score=0;
+
+const STORAGE_KEY='spanishIdiomsSRS';
+function loadState(){
+  try{return JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}')}catch{return{}}
+}
+function saveState(s){localStorage.setItem(STORAGE_KEY,JSON.stringify(s))}
+let state=loadState();
+for(let i=0;i<DATA.length;i++){
+  if(!state[i]) state[i]={reps:0, interval:0, ease:2.5, due:0};
+}
+let queue=[];
+function buildQueue(){
+  const now=Date.now();
+  queue=DATA.map((_,i)=>({i, due:state[i].due})).filter(o=>o.due<=now).sort((a,b)=>a.due-b.due);
+  if(queue.length===0){ // fallback: all items
+    queue=DATA.map((_,i)=>({i, due:0}));
+  }
+}
+let pos=0;
 const idxEl=document.getElementById('idx');
 const totalEl=document.getElementById('total');
 const exprEl=document.getElementById('expr');
@@ -74,79 +111,107 @@ const checkBtn=document.getElementById('check');
 const nextBtn=document.getElementById('next');
 const aiBtn=document.getElementById('ai');
 const fb=document.getElementById('feedback');
-const scoreEl=document.getElementById('score');
+const rateDiv=document.getElementById('rate');
+const dueEl=document.getElementById('due');
+const knownEl=document.getElementById('known');
+const progEl=document.getElementById('prog');
+const overviewEl=document.getElementById('overview');
+
 totalEl.textContent=DATA.length;
+function knownCount(){
+  return Object.values(state).filter(s=>s.reps>=3).length;
+}
+function updateMeta(){
+  dueEl.textContent=queue.length;
+  knownEl.textContent=knownCount();
+  const pct=Math.round(knownCount()/DATA.length*100);
+  progEl.style.width=pct+'%';
+}
+function renderOverview(){
+  overviewEl.innerHTML='';
+  DATA.forEach((d,i)=>{
+    const s=state[i];
+    const card=document.createElement('div');
+    card.className='card';
+    card.style.padding='12px';
+    card.innerHTML=`<div class="meta">${d.expr}</div>
+    <div><span class="badge">reps ${s.reps}</span> <span class="badge">int ${s.interval}d</span> <span class="badge">ease ${s.ease.toFixed(2)}</span></div>`;
+    overviewEl.appendChild(card);
+  });
+}
 function render(){
- idxEl.textContent=i+1;
- exprEl.textContent=DATA[i].expr;
- headEl.textContent=DATA[i].head;
- guessEl.value='';
- fb.hidden=true;
- nextBtn.disabled=true;
- checkBtn.disabled=false;
+  if(pos>=queue.length){
+    endSession(); return;
+  }
+  const itemIdx=queue[pos].i;
+  idxEl.textContent=pos+1;
+  exprEl.textContent=DATA[itemIdx].expr;
+  headEl.textContent=DATA[itemIdx].head;
+  guessEl.value='';
+  fb.hidden=true; rateDiv.hidden=true;
+  nextBtn.disabled=true; checkBtn.disabled=false;
+  updateMeta();
 }
 function showAnswers(){
- const item=DATA[i];
- fb.hidden=false;
- fb.innerHTML='<strong>Book equivalents:</strong><ul>'+item.eng.map(e=>'<li>'+e+'</li>').join('')+'</ul>';
+  const itemIdx=queue[pos].i;
+  const item=DATA[itemIdx];
+  fb.hidden=false;
+  fb.innerHTML='<strong>Book equivalents:</strong><ul>'+item.eng.map(e=>'<li>'+e+'</li>').join('')+'</ul>';
+  rateDiv.hidden=false;
 }
-function buildPrompt(){
- const item=DATA[i];
- const user=guessEl.value.trim()||'(empty)';
- const correct=item.eng.join(' | ');
- const prompt=`You are a Spanish idioms tutor. Task: evaluate a student's free-text meaning guess.
-
-Spanish idiom: ${item.expr}
-Headword: ${item.head}
-Book equivalents: ${correct}
-Student guess: ${user}
-
-Provide concise feedback:
-1. Is the core meaning captured? Yes/No + one sentence why.
-2. What is missing or imprecise?
-3. Give the canonical English meaning in one short sentence.
-Return only the feedback, no extra formatting.`;
- return prompt;
+function updateSRS(idx, quality){
+  const s=state[idx];
+  const now=Date.now();
+  if(quality<3){
+    s.reps=0;
+    s.interval=1;
+  }else{
+    if(s.reps===0){ s.interval=1; }
+    else if(s.reps===1){ s.interval=6; }
+    else { s.interval=Math.round(s.interval*s.ease); }
+    s.reps++;
+  }
+  s.ease=Math.max(1.3, s.ease + 0.1 - (5-quality)*(0.08 + (5-quality)*0.02));
+  s.due=now + s.interval*86400000;
+  saveState(state);
+  updateMeta();
+  renderOverview();
 }
 checkBtn.onclick=()=>{
- const user=guessEl.value.trim();
- if(!user){alert('Type a guess first');return}
- showAnswers();
- checkBtn.disabled=true;
- nextBtn.disabled=false;
- // naive scoring: contains keyword overlap? keep simple
- scoreEl.textContent=score;
+  if(!guessEl.value.trim()){alert('Type a guess first');return}
+  showAnswers();
+  checkBtn.disabled=true;
 };
-nextBtn.onclick=()=>{
- i++;
- if(i>=DATA.length){
-   document.querySelector('.card').hidden=true;
-   document.getElementById('result').hidden=false;
-   document.getElementById('resultText').textContent=`You finished! Score ${score}/${DATA.length}.`;
-   return;
- }
- render();
-};
+document.getElementById('rateBad').onclick=()=>{ updateSRS(queue[pos].i,0); pos++; render(); };
+document.getElementById('rateOk').onclick=()=>{ updateSRS(queue[pos].i,3); pos++; render(); };
+document.getElementById('rateGood').onclick=()=>{ updateSRS(queue[pos].i,5); pos++; render(); };
+nextBtn.onclick=()=>{ pos++; render(); };
 aiBtn.onclick=()=>{
- const prompt=buildPrompt();
- const encoded=encodeURIComponent(prompt);
- const chatgptUrl=`https://chatgpt.com/?q=${encoded}`;
- const copy=async()=>{await navigator.clipboard.writeText(prompt);};
- // offer both
- if(confirm('Open ChatGPT with prefilled prompt? Cancel to copy to clipboard instead.')){
-   window.open(chatgptUrl,'_blank');
- }else{
-   copy();
-   alert('Prompt copied to clipboard');
- }
+  const itemIdx=queue[pos]?.i;
+  if(itemIdx===undefined) return;
+  const item=DATA[itemIdx];
+  const user=guessEl.value.trim()||'(empty)';
+  const prompt=`You are a Spanish idioms tutor. Spanish idiom: ${item.expr}\nHeadword: ${item.head}\nBook equivalents: ${item.eng.join(' | ')}\nStudent guess: ${user}\nProvide concise feedback: core meaning captured? what's missing? give canonical meaning.`;
+  const url='https://chatgpt.com/?q='+encodeURIComponent(prompt);
+  if(confirm('Open ChatGPT with prefilled prompt? Cancel to copy to clipboard.')){
+    window.open(url,'_blank');
+  }else{
+    navigator.clipboard.writeText(prompt);
+    alert('Prompt copied');
+  }
 };
+function endSession(){
+  document.querySelector('main > .card').hidden=true;
+  document.getElementById('result').hidden=false;
+  document.getElementById('resultText').textContent=`Session complete. Known items: ${knownCount()}/${DATA.length}. Review due items will reappear later.`;
+}
 document.getElementById('restart').onclick=()=>{
- i=0; score=0; scoreEl.textContent='0';
- document.querySelector('.card').hidden=false;
- document.getElementById('result').hidden=true;
- render();
+  buildQueue(); pos=0; document.getElementById('result').hidden=true; document.querySelector('main > .card').hidden=false; render();
 };
-render();
+document.getElementById('reset').onclick=()=>{
+  if(confirm('Reset all progress?')){ localStorage.removeItem(STORAGE_KEY); location.reload(); }
+};
+buildQueue(); render(); renderOverview(); updateMeta();
 </script>
 </body>
 </html>
