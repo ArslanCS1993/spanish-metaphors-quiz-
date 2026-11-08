@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spanish Idioms Quiz — Guess the Meaning</title>
+<style>
+:root{--bg:#0b0f14;--card:#121821;--muted:#8a94a6;--accent:#6ee7ff;--good:#4ade80;--bad:#f87171;--text:#e6edf3}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu}
+header{padding:24px 20px;border-bottom:1px solid #1f2937;background:linear-gradient(180deg,#0f1520,transparent)}
+h1{margin:0;font-size:clamp(22px,4vw,32px)}
+.sub{color:var(--muted);margin-top:6px}
+main{max-width:880px;margin:0 auto;padding:24px 20px}
+.card{background:var(--card);border:1px solid #1f2937;border-radius:16px;padding:20px;margin:20px 0}
+.expr{font-size:clamp(20px,4vw,28px);font-weight:600;margin:0 0 8px}
+.meta{color:var(--muted);font-size:14px}
+textarea{width:100%;min-height:110px;background:#0b1118;border:1px solid #243043;color:var(--text);border-radius:12px;padding:12px;font:15px/1.5 ui-monospace,Menlo,Consolas}
+button{background:var(--accent);color:#001018;border:0;border-radius:12px;padding:12px 18px;font-weight:600;cursor:pointer}
+button.secondary{background:#1f2937;color:var(--text)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
+.answers{margin-top:16px;padding:12px;background:#0b1118;border-radius:12px;border:1px dashed #243043;color:var(--muted)}
+.score{font-weight:600}
+footer{color:var(--muted);font-size:13px;margin-top:32px}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+<h1>Spanish Idioms — Meaning Quiz</h1>
+<div class="sub">Guess the meaning in English. 10 idioms, free text. AI feedback via ChatGPT prefill, no backend.</div>
+</header>
+<main>
+<div class="card">
+<div class="meta">Item <span id="idx">1</span> / <span id="total">10</span> &nbsp;•&nbsp; Score: <span id="score" class="score">0</span></div>
+<p class="expr" id="expr">—</p>
+<p class="meta" id="head">—</p>
+<textarea id="guess" placeholder="Type your guess for the meaning in English…"></textarea>
+<div class="row">
+<button id="check">Check</button>
+<button id="next" class="secondary" disabled>Next →</button>
+<button id="ai" class="secondary">Get AI feedback</button>
+</div>
+<div id="feedback" class="answers" hidden></div>
+</div>
+<div class="card" id="result" hidden>
+<h2>Done</h2>
+<p id="resultText"></p>
+<button id="restart">Restart quiz</button>
+</div>
+<footer>Data source: The Big Red Book of Spanish Idioms. 10 sample items from /root/figurativeLanguage/spanish/spanish_idioms_full.md</footer>
+</main>
+<script>
+const DATA = [
+{head:"abarcar", expr:"Quien mucho abarca, poco aprieta.", eng:["You can bite off more than you can chew.","Don’t bite off more than you can chew."]},
+{head:"la abeja", expr:"estar como abeja en flor", eng:["to feel really great","to feel on top of the world","to feel completely at home","to be in one’s element"]},
+{head:"abocar a", expr:"estar abocado al fracaso", eng:["to be doomed to fail/failure"]},
+{head:"abocar a", expr:"estar abocado a un desastre", eng:["to be heading for a disaster"]},
+{head:"abocar a", expr:"verse abocado a un peligro", eng:["to be facing danger","to see danger looming ahead"]},
+{head:"el aborto", expr:"ser un aborto del diablo", eng:["to be as ugly as sin/hell","to be incredibly ugly"]},
+{head:"abrasarse", expr:"abrasarse de sed", eng:["to have a raging thirst","to be dying of thirst","to be parched"]},
+{head:"abrasarse", expr:"abrasarse de calor", eng:["to nearly die in the heat","to be dying of the heat"]},
+{head:"abrasarse", expr:"abrasarse de amores", eng:["to be burning with love","to be madly in love"]},
+{head:"abrasarse", expr:"abrasarse en deseo", eng:["to be ablaze/aflame with desire"]}
+];
+let i=0, score=0;
+const idxEl=document.getElementById('idx');
+const totalEl=document.getElementById('total');
+const exprEl=document.getElementById('expr');
+const headEl=document.getElementById('head');
+const guessEl=document.getElementById('guess');
+const checkBtn=document.getElementById('check');
+const nextBtn=document.getElementById('next');
+const aiBtn=document.getElementById('ai');
+const fb=document.getElementById('feedback');
+const scoreEl=document.getElementById('score');
+totalEl.textContent=DATA.length;
+function render(){
+ idxEl.textContent=i+1;
+ exprEl.textContent=DATA[i].expr;
+ headEl.textContent=DATA[i].head;
+ guessEl.value='';
+ fb.hidden=true;
+ nextBtn.disabled=true;
+ checkBtn.disabled=false;
+}
+function showAnswers(){
+ const item=DATA[i];
+ fb.hidden=false;
+ fb.innerHTML='<strong>Book equivalents:</strong><ul>'+item.eng.map(e=>'<li>'+e+'</li>').join('')+'</ul>';
+}
+function buildPrompt(){
+ const item=DATA[i];
+ const user=guessEl.value.trim()||'(empty)';
+ const correct=item.eng.join(' | ');
+ const prompt=`You are a Spanish idioms tutor. Task: evaluate a student's free-text meaning guess.
+
+Spanish idiom: ${item.expr}
+Headword: ${item.head}
+Book equivalents: ${correct}
+Student guess: ${user}
+
+Provide concise feedback:
+1. Is the core meaning captured? Yes/No + one sentence why.
+2. What is missing or imprecise?
+3. Give the canonical English meaning in one short sentence.
+Return only the feedback, no extra formatting.`;
+ return prompt;
+}
+checkBtn.onclick=()=>{
+ const user=guessEl.value.trim();
+ if(!user){alert('Type a guess first');return}
+ showAnswers();
+ checkBtn.disabled=true;
+ nextBtn.disabled=false;
+ // naive scoring: contains keyword overlap? keep simple
+ scoreEl.textContent=score;
+};
+nextBtn.onclick=()=>{
+ i++;
+ if(i>=DATA.length){
+   document.querySelector('.card').hidden=true;
+   document.getElementById('result').hidden=false;
+   document.getElementById('resultText').textContent=`You finished! Score ${score}/${DATA.length}.`;
+   return;
+ }
+ render();
+};
+aiBtn.onclick=()=>{
+ const prompt=buildPrompt();
+ const encoded=encodeURIComponent(prompt);
+ const chatgptUrl=`https://chatgpt.com/?q=${encoded}`;
+ const copy=async()=>{await navigator.clipboard.writeText(prompt);};
+ // offer both
+ if(confirm('Open ChatGPT with prefilled prompt? Cancel to copy to clipboard instead.')){
+   window.open(chatgptUrl,'_blank');
+ }else{
+   copy();
+   alert('Prompt copied to clipboard');
+ }
+};
+document.getElementById('restart').onclick=()=>{
+ i=0; score=0; scoreEl.textContent='0';
+ document.querySelector('.card').hidden=false;
+ document.getElementById('result').hidden=true;
+ render();
+};
+render();
+</script>
+</body>
+</html>
